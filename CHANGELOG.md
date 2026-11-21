@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 — 2026-11-21
+
+- Add optional static Bearer API key authentication for remote `/mcp` clients.
+- API key mode uses one live Shopee account configured through runtime secrets;
+  OAuth connections remain available as a separate mode.
+- Add deployment guidance for Agentes Chat API key connections.
+
 ## 0.5.0 — 2026-10-02
 
 - Chave privada do proprietário exigida antes de validar Shopee ou emitir tokens.

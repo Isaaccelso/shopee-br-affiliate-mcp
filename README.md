@@ -1,6 +1,6 @@
-# Shopee Affiliate MCP — 0.5.0
+# Shopee Affiliate MCP — 0.6.0
 
-Servidor MCP em Python para a Open API de Afiliados Shopee Brasil. Expõe 17 ferramentas por stdio ou Streamable HTTP com OAuth e usa consultas GraphQL assinadas com App ID e Secret da conta configurada.
+Servidor MCP em Python para a Open API de Afiliados Shopee Brasil. Expõe 17 ferramentas por stdio ou Streamable HTTP com OAuth e, em instalações privadas, Bearer API key. Usa consultas GraphQL assinadas com App ID e Secret da conta configurada.
 
 O modo padrão é `fixture`: produtos sintéticos e nenhuma chamada externa. O modo `live` exige credenciais e o perfil administrativo oficial. Os contratos foram conferidos no portal brasileiro em 2026-10-01. As novas operações foram testadas com respostas simuladas; a aceitação real depende das permissões da conta.
 
@@ -36,17 +36,17 @@ Esta versão é inicial: as novas ferramentas passaram em testes simulados e ain
 
 ## Conectar pelo ChatGPT ou Hermes
 
-Para uso pessoal em Codex, Hermes e Claude Code, siga [PRIVATE.md](docs/PRIVATE.md).
-O formulário exige uma chave privada antes de autorizar as credenciais Shopee.
+Para uso pessoal em Codex, Hermes e Claude Code via OAuth, siga [PRIVATE.md](docs/PRIVATE.md).
+O formulário OAuth exige uma chave privada antes de autorizar as credenciais Shopee.
 
-Para subir no **Dokploy de forma privada**, siga [o guia completo de configuração, OAuth e headers](docs/DOKPLOY-PRIVADO.md).
+Para subir no **Dokploy de forma privada**, siga [o guia de configuração, OAuth e API key](docs/DOKPLOY-PRIVADO.md).
 Para Coolify, siga [o guia de configuração](docs/COOLIFY.md).
 
-O transporte `oauth-http` oferece uma única tela com App ID e App Secret. Não exige cadastro ou senha adicional. Valida o acesso à Shopee antes de autorizar o cliente. As credenciais e sessões ficam criptografadas em SQLite num volume persistente e sobrevivem a reinícios; o servidor entrega tokens próprios ao cliente MCP.
+O transporte remoto oferece OAuth, com formulário e credenciais criptografadas em SQLite, ou API key estática Bearer para uma conta fixa do servidor. No modo API key, `MCP_API_KEY` protege `/mcp`; `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` ficam como secrets de runtime para assinar chamadas à Shopee. A chave MCP não substitui as credenciais Shopee.
 
-Hospede atrás de HTTPS na VPS e configure `MCP_PUBLIC_URL` e `SHOPEE_VERIFIED_PROFILE`. Cada conexão usa sua própria conta. Conexões com as mesmas credenciais compartilham o cliente e os controles locais. Histórico SQLite fica desabilitado neste transporte.
+Hospede atrás de HTTPS na VPS e configure `MCP_PUBLIC_URL` e `SHOPEE_VERIFIED_PROFILE`. OAuth pode usar contas por conexão; API key usa a conta fixa do servidor. Conexões com as mesmas credenciais compartilham o cliente e os controles locais. Histórico SQLite fica desabilitado neste transporte.
 
-Veja o [guia de conexão remota](docs/REMOTE.md), o [Compose](compose.remote.yaml) e o [exemplo Hermes com OAuth](examples/hermes.remote.yaml). Esta integração é experimental e passou em testes simulados; a conexão real pelo ChatGPT/Hermes e a VPS ainda precisam de aceitação.
+Veja o [guia de conexão remota](docs/REMOTE.md), o [guia Dokploy](docs/DOKPLOY-PRIVADO.md), o [Compose](compose.remote.yaml) e o [exemplo Hermes com OAuth](examples/hermes.remote.yaml).
 
 ## Instalação
 
@@ -118,7 +118,7 @@ Configure `SHOPEE_HISTORY_DB` para habilitar as ferramentas de histórico. Somen
 
 Veja [instalação na VPS](docs/VPS.md). Para Hermes na mesma VPS, stdio dispensa porta pública. O Dockerfile roda como usuário sem privilégios e inicia em fixture por padrão. A CI valida o build Docker e initialize/list/status MCP dentro do container em fixture. A configuração HTTPS e o fluxo live ainda precisam de teste no destino.
 
-O transporte `private-http` permanece experimental, restrito ao loopback e protegido por um token separado. Para conexão remota, use `oauth-http` atrás de HTTPS conforme o [guia](docs/REMOTE.md).
+O transporte `private-http` permanece restrito ao loopback e protegido por um token separado. Para conexão remota, use OAuth ou API key atrás de HTTPS conforme o [guia](docs/REMOTE.md).
 
 ## Verificação
 

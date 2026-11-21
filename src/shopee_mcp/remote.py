@@ -70,6 +70,14 @@ class SessionRefresh(RefreshToken):
     grant: str
 
 
+class StaticApiKeyUser:
+    """Identity attached only after the configured MCP API key is verified."""
+    __slots__ = ("service",)
+
+    def __init__(self, service):
+        self.service = service
+
+
 def public_origin(value):
     p = urlsplit(value)
     if (not p.hostname or p.username or p.password or p.query or p.fragment
@@ -362,6 +370,8 @@ class OAuthConnections:
 
     def resolve_service(self, request):
         user = request.scope.get("user") if request else None
+        if isinstance(user, StaticApiKeyUser):
+            return user.service
         access = getattr(user, "access_token", None)
         grant = self.grants.get(access.grant) if isinstance(access, SessionAccess) else None
         if (not grant or grant.expires_at <= self.clock() or access.expires_at <= self.clock()
@@ -427,6 +437,9 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
         owner_hash = os.getenv("MCP_OWNER_KEY_SHA256", "")
     if owner_hash and not re.fullmatch(r"[a-f0-9]{64}", owner_hash):
         raise SafeError("CONFIGURATION", "MCP_OWNER_KEY_SHA256 deve ser o SHA256 de uma chave privada aleatória.")
+    api_key = os.getenv("MCP_API_KEY", "")
+    if api_key and (len(api_key) < 32 or any(ord(c) < 33 or ord(c) > 126 for c in api_key)):
+        raise SafeError("CONFIGURATION", "MCP_API_KEY precisa ter pelo menos 32 caracteres ASCII sem espaços.")
     if factory is None:
         if not owner_hash:
             raise SafeError("CONFIGURATION", "Configure MCP_OWNER_KEY_SHA256 para autorizar somente o proprietário.")
@@ -434,6 +447,9 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
         restore_factory = live_factory(validate=False)
         store = store or EncryptedStore(os.getenv("MCP_STATE_DB", "/app/data/oauth.sqlite3"),
             os.getenv("MCP_CREDENTIALS_KEY", ""))
+    static_credentials = Credentials.from_env() if api_key else None
+    static_account = os.getenv("SHOPEE_ACCOUNT_REFERENCE", "shopee-affiliate")
+    static_service = None
     provider = OAuthConnections(origin, factory, clock=clock, redirects=redirects,
         store=store, restore_factory=restore_factory, owner_hash=owner_hash,
         allow_loopback=allow_loopback if allow_loopback is not None else os.getenv("MCP_ALLOW_LOOPBACK_CALLBACKS") == "true")
@@ -529,16 +545,32 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
             allowed_hosts=[urlsplit(origin).netloc], allowed_origins=[origin]))
     authenticated = RequireAuthMiddleware(manager.handle_request, [SCOPE],
         resource_metadata_url=AnyHttpUrl(origin + "/.well-known/oauth-protected-resource/mcp"))
+
+    async def authenticate_mcp(scope, receive, send):
+        if scope["type"] == "http" and scope["path"] in {"/mcp", "/mcp/"} and api_key:
+            authorization = dict(scope["headers"]).get(b"authorization", b"")
+            scheme, separator, token = authorization.partition(b" ")
+            if separator and scheme.lower() == b"bearer" and hmac.compare_digest(token, api_key.encode("ascii")):
+                if static_service is None:
+                    return await JSONResponse({"error": "service unavailable"}, status_code=503)(scope, receive, send)
+                authenticated_scope = dict(scope)
+                authenticated_scope["user"] = StaticApiKeyUser(static_service)
+                return await manager.handle_request(authenticated_scope, receive, send)
+        return await authenticated(scope, receive, send)
+
     async def health(request):
-        return JSONResponse({"status": "ok", "version": "0.5.0"})
+        return JSONResponse({"status": "ok", "version": "0.6.0"})
 
     routes.extend([Route("/health", health, methods=["GET"]),
         Route("/connect", connect, methods=["GET", "POST"]),
-        Route("/mcp", authenticated, methods=["GET", "POST", "DELETE"]),
-        Route("/mcp/", authenticated, methods=["GET", "POST", "DELETE"])])
+        Route("/mcp", authenticate_mcp, methods=["GET", "POST", "DELETE"]),
+        Route("/mcp/", authenticate_mcp, methods=["GET", "POST", "DELETE"])])
 
     @asynccontextmanager
     async def lifespan(app):
+        nonlocal static_service
+        if static_credentials:
+            static_service = await factory(static_credentials, static_account)
         await provider.restore()
         async def cleanup():
             while True:
@@ -556,6 +588,8 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
             except asyncio.CancelledError:
                 pass
             await provider.close()
+            if static_service and isinstance(static_service.provider, LiveProvider):
+                await static_service.provider.client.close()
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.oauth = provider

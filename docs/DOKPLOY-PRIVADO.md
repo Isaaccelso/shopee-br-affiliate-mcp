@@ -1,8 +1,10 @@
-# Shopee Affiliate MCP privado no Dokploy
+# Shopee Affiliate MCP no Dokploy
 
-Este guia é para o fork [Isaaccelso/shopee-br-affiliate-mcp](https://github.com/Isaaccelso/shopee-br-affiliate-mcp), usando o transporte **Streamable HTTP + OAuth**. A instalação atende um uso pessoal; não é um sistema multiusuário com login por e-mail.
+Este guia é para o fork [Isaaccelso/shopee-br-affiliate-mcp](https://github.com/Isaaccelso/shopee-br-affiliate-mcp), usando Streamable HTTP com OAuth ou Bearer API key. A instalação atende um uso pessoal; não é um sistema multiusuário com login por e-mail.
 
-**O que fica protegido:** qualquer ferramenta em `/mcp` exige um token OAuth válido. Para emitir esse token, a autorização interativa exige uma chave privada do proprietário **além** das credenciais da Open API de Afiliados da Shopee. A Shopee não autentica visitantes do seu servidor MCP.
+**Modo API key:** `/mcp` aceita `Authorization: Bearer <MCP_API_KEY>` e usa a conta única definida por `SHOPEE_APP_ID`/`SHOPEE_APP_SECRET`. A chave MCP autentica o cliente no seu serviço; as credenciais Shopee assinam chamadas à API oficial.
+
+**Modo OAuth:** a autorização interativa exige uma chave privada do proprietário além das credenciais de afiliado. O servidor guarda credenciais e tokens criptografados no volume persistente. A Shopee não autentica visitantes do seu servidor MCP.
 
 **O que continua público:** `/health` e os metadados/registro OAuth (`/.well-known/*`, `/register`) precisam estar disponíveis para o fluxo de conexão. Registrá-lo como cliente OAuth **não** autoriza usar ferramentas. Não publique sua chave privada, chaves de criptografia, App Secret, tokens nem o banco SQLite.
 
@@ -36,6 +38,15 @@ print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
 PY
 ```
 
+**API key do Agentes Chat**: gere um token separado e salve como secret `MCP_API_KEY` no Dokploy. Nunca use o App Secret Shopee como chave do MCP.
+
+```bash
+python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+```
+
 **Atenção:** trocar o hash do proprietário invalida conexões existentes. Trocar `MCP_CREDENTIALS_KEY` sem migrar o banco impede abrir o estado criptografado. Guarde backups do volume e da chave Fernet separadamente.
 
 ## 3. Criar o serviço no Dokploy
@@ -57,7 +68,7 @@ MCP_ALLOW_LOOPBACK_CALLBACKS=false
 MCP_OAUTH_REDIRECT_URIS=[]
 ```
 
-**Não coloque `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` no runtime `oauth-http`**. Nesse transporte as credenciais são informadas uma vez no formulário de autorização e ficam criptografadas no banco. No modo `stdio --mode live`, as variáveis `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` são necessárias ao processo local.
+No modo OAuth, não é necessário colocar `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` no runtime: o formulário os guarda criptografados no banco. No modo API key, configure ambos como secrets de runtime, além de `MCP_API_KEY`; eles são usados para assinar as chamadas à Shopee.
 
 Se sua tela do Dokploy não disponibilizar a escolha do build target, use um deploy Docker Compose personalizado com `build.target: remote`, conectando o serviço ao proxy do Dokploy pela rede interna. Não use o estágio `stdio` esperando que ele abra uma porta.
 
@@ -92,10 +103,11 @@ Accept: application/json, text/event-stream
 MCP-Protocol-Version: 2025-06-18
 ```
 
-- **Não existe `X-API-Key` obrigatório** nem API key estática para `/mcp`.
-- `MCP_OWNER_KEY_SHA256` **não é** um header: é o hash de uma chave privada que você digita no formulário `/connect`.
-- Não coloque App ID, App Secret ou chave do proprietário no `Authorization` do cliente MCP.
-- O Bearer token só é entregue **depois** da autorização e expira/renova pelo fluxo OAuth. O cliente faz a renovação.
+- Não há header `X-API-Key`; no modo estático use o header `Authorization: Bearer`.
+- `MCP_API_KEY` é a chave estática do modo API key; o cliente a envia como Bearer. Gere-a aleatoriamente e não a reutilize em outros serviços.
+- `MCP_OWNER_KEY_SHA256` é usado somente pelo fluxo OAuth legado, não pelo modo API key.
+- App ID e App Secret Shopee nunca são enviados pelo cliente MCP em cada chamada; ficam no ambiente protegido do servidor.
+- OAuth continua disponível como modo alternativo, com tokens rotativos.
 - `/mcp` usa transporte **Streamable HTTP stateless**; não é um SSE ou um endpoint REST comum de ofertas.
 
 ### Seu MCP → API oficial Shopee (assinatura SHA256)
@@ -110,6 +122,12 @@ Content-Type: application/json
 Accept: application/json
 ```
 
+Para o cliente Agentes Chat no modo API key, a chamada MCP usa:
+
+```http
+Authorization: Bearer <MCP_API_KEY>
+```
+
 Endpoint: `https://open-api.affiliate.shopee.com.br/graphql`.
 
 A assinatura é:
@@ -121,11 +139,12 @@ O timestamp e o JSON assinado mudam a cada requisição. **Não copie um header 
 
 ## 6. Conectar no ChatGPT
 
-1. Nas configurações de plugins/conectores MCP, quando a opção estiver disponível, cadastre `https://shopee-mcp.seudominio.com.br/mcp` e escolha OAuth.
-2. O cliente abre o formulário de conexão. Verifique o domínio e o endereço de redirecionamento exibidos.
-3. Informe **CHAVE_PRIVADA** (gerada no passo 2), **App ID** e **App Secret** da Shopee.
-4. Confirme a autorização. O MCP valida as credenciais com uma pesquisa de produto antes de emitir token.
-5. Teste `affiliate_status` e depois `search_offers` com uma palavra-chave.
+1. Cadastre `https://shopee-mcp.seudominio.com.br/mcp` como servidor MCP.
+2. Escolha **Chave de API** e informe `MCP_API_KEY`; não adicione um header manual.
+3. O Agentes Chat valida e sincroniza as ferramentas usando `Authorization: Bearer ...`.
+4. Confirme que a conexão ficou ativa e que as ferramentas foram sincronizadas.
+
+Para OAuth, siga o formulário com a chave privada e as credenciais da Shopee conforme [REMOTE.md](REMOTE.md).
 
 Por padrão, callbacks locais (`localhost` / `127.0.0.1`) ficam **bloqueados**. Para conectar Hermes/Codex com retorno ao próprio computador, cadastre **somente** a URI exata necessária em `MCP_OAUTH_REDIRECT_URIS` ou habilite `MCP_ALLOW_LOOPBACK_CALLBACKS=true` conscientemente. Nunca libere URLs externas genéricas ou curingas.
 
@@ -167,8 +186,9 @@ O endpoint `/register` possui limite local de 10 tentativas por minuto e cota de
 
 ## 9. Se uma chave vazar
 
-- **Chave privada do proprietário:** gere outra, atualize `MCP_OWNER_KEY_SHA256` e reconecte os clientes; as conexões antigas são revogadas quando o estado é reaberto com a política nova.
-- **Token MCP:** revogue a conexão/tokens e reconecte; proteja dispositivos e histórico dos clientes.
+- **Chave privada do proprietário:** gere outra, atualize `MCP_OWNER_KEY_SHA256` e reconecte os clientes OAuth; as conexões antigas são revogadas quando o estado é reaberto com a política nova.
+- **MCP_API_KEY:** gere outro token, atualize o secret no Dokploy e reconecte os clientes que usam a chave estática.
+- **Token OAuth MCP:** revogue a conexão/tokens e reconecte; proteja dispositivos e histórico dos clientes.
 - **App Secret da Shopee:** rotacione pelo painel oficial e autorize novamente; não basta trocar o hash do proprietário.
 - **Chave Fernet:** não troque sem plano de migração/rotação dos dados criptografados. Se comprometida junto com o banco, considere as credenciais expostas e rotacione na origem.
 

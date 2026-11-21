@@ -1,10 +1,10 @@
-# Conexão remota com uma única tela — 0.5.0
+# Conexão remota: OAuth ou API key — 0.6.0
 
-O cliente abre uma tela da chave privada, App ID e App Secret Shopee.
-A chave privada é obrigatória para autorizar o acesso; veja [PRIVATE.md](PRIVATE.md). Não há cadastro nem
-senha adicional. As credenciais são enviadas diretamente ao servidor HTTPS,
-validadas com uma pesquisa de produto e armazenadas criptografadas em SQLite num volume persistente. O cliente
-MCP recebe um token próprio, sem receber os segredos Shopee.
+O transporte remoto aceita dois modos. OAuth abre uma tela da chave privada,
+App ID e App Secret Shopee e guarda as credenciais criptografadas no volume.
+API key protege o endpoint MCP com `Authorization: Bearer <MCP_API_KEY>` e usa
+uma conta fixa configurada pelo administrador em secrets de runtime. A API key
+é distinta das credenciais Shopee: ela autentica o cliente no seu MCP.
 
 No Coolify, siga [COOLIFY.md](COOLIFY.md).
 
@@ -25,12 +25,17 @@ MCP_OWNER_KEY_SHA256=HASH_DA_CHAVE_PRIVADA
 MCP_PUBLIC_URL=https://mcp.example.com
 MCP_STATE_DB=/app/data/oauth.sqlite3
 MCP_CREDENTIALS_KEY=COLE_A_CHAVE_FERNET_GERADA
+MCP_API_KEY=TOKEN_ALEATORIO_FORTE
 MCP_OAUTH_REDIRECT_URIS=["http://localhost:27890/callback"]
+SHOPEE_APP_ID=APP_ID_DA_OPEN_API
+SHOPEE_APP_SECRET=APP_SECRET_DA_OPEN_API
+SHOPEE_ACCOUNT_REFERENCE=minha-conta
 ```
 
-Esse arquivo contém a chave de criptografia; proteja-o e não envie ao GitHub.
-Não recebe App ID ou App Secret Shopee. Gere e guarde a chave conforme
-[COOLIFY.md](COOLIFY.md), e preserve o volume entre deploys.
+Configure os valores sensíveis no ambiente de secrets do Dokploy, não no Git.
+`MCP_API_KEY` deve ser aleatória e ter pelo menos 32 caracteres. No modo API key,
+`SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` são necessários para as chamadas live.
+`MCP_CREDENTIALS_KEY` e o volume continuam necessários para manter o modo OAuth.
 
 ```sh
 docker compose -f compose.remote.yaml up -d --build
@@ -50,7 +55,7 @@ SHOPEE_VERIFIED_PROFILE=/opt/shopee-affiliate-mcp/examples/profile.official.json
 .venv/bin/python run.py --transport oauth-http --port 8765
 ```
 
-Este transporte sempre opera em live; não lê credenciais Shopee do ambiente.
+Este transporte sempre opera em live.
 Ele escuta em `0.0.0.0` dentro do processo/container para o proxy alcançá-lo.
 Use firewall/rede privada para permitir acesso somente pelo proxy HTTPS.
 
@@ -58,15 +63,14 @@ Use firewall/rede privada para permitir acesso somente pelo proxy HTTPS.
 
 Habilite o modo de desenvolvedor, quando disponível na sua conta/workspace,
 e adicione uma conexão MCP com a URL `https://mcp.example.com/mcp`.
-Selecione autenticação OAuth e cadastro dinâmico de cliente (DCR), se a
-interface pedir essa escolha. Não configure uma chave Shopee como secret
-OAuth: o cadastro do cliente é separado das credenciais Shopee.
+Selecione **Chave de API** e informe `MCP_API_KEY`. O Agentes Chat envia o valor
+como `Authorization: Bearer ...`; não crie um cabeçalho adicional. Em OAuth,
+selecione OAuth/DCR e siga o formulário de credenciais.
 
-Ao conectar, o navegador abre a tela de credenciais. Confira o domínio do
-servidor e o destino ChatGPT mostrado na tela. Preencha App ID e App Secret da
-Open API de Afiliados, confirme e volte ao ChatGPT. Nunca use a senha de login
-da Shopee nesse formulário. Se a API não aceitar a pesquisa, não há emissão
-de token; uma pesquisa aceita sem produtos também valida o acesso inicial.
+No modo API key, não há callback nem formulário Shopee: os secrets são lidos
+do runtime do servidor. No modo OAuth, confira o domínio e o destino exibidos,
+preencha App ID e App Secret da Open API de Afiliados e nunca use a senha de
+login da Shopee. O servidor valida o acesso antes de concluir a conexão.
 
 Comece pedindo `affiliate_status`, depois uma busca. Para gerar links, use a
 referência de conta retornada pelo status; ela é um identificador local opaco
