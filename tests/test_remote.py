@@ -352,6 +352,28 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 413)
         self.assertEqual((await self.client.get('/connect', headers={'Host': 'evil.invalid'})).status_code, 403)
 
+    async def test_public_oauth_registration_is_rate_limited(self):
+        # The dynamic registration endpoint is intentionally public for clients
+        # like ChatGPT, but it must not accept unlimited registration bursts.
+        for _ in range(10):
+            await self.register()
+        denied = await self.client.post('/register', json={'redirect_uris': [CALLBACK],
+            'client_name': 'Synthetic MCP client', 'token_endpoint_auth_method': 'none',
+            'grant_types': ['authorization_code', 'refresh_token'], 'scope': 'shopee'})
+        self.assertEqual(denied.status_code, 400, denied.text)
+        self.assertEqual(len(self.app.state.oauth.clients), 10)
+        self.now += 61
+        await self.register()
+        self.assertEqual(len(self.app.state.oauth.clients), 11)
+
+    async def test_oauth_security_headers_and_protected_tools(self):
+        protected = await self.client.post('/mcp', json={})
+        self.assertEqual(protected.status_code, 401)
+        self.assertEqual(protected.headers['cache-control'], 'no-store')
+        self.assertEqual(protected.headers['x-frame-options'], 'DENY')
+        self.assertEqual(protected.headers['strict-transport-security'], 'max-age=31536000')
+        self.assertEqual(protected.headers['permissions-policy'], 'camera=(), microphone=(), geolocation=()')
+
     async def test_restart_drops_credentials_and_tokens(self):
         _, token = await self.token()
         await self.app.state.oauth.close()

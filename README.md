@@ -39,7 +39,8 @@ Esta versão é inicial: as novas ferramentas passaram em testes simulados e ain
 Para uso pessoal em Codex, Hermes e Claude Code, siga [PRIVATE.md](docs/PRIVATE.md).
 O formulário exige uma chave privada antes de autorizar as credenciais Shopee.
 
-Para subir no Coolify, siga [o guia de configuração](docs/COOLIFY.md).
+Para subir no **Dokploy de forma privada**, siga [o guia completo de configuração, OAuth e headers](docs/DOKPLOY-PRIVADO.md).
+Para Coolify, siga [o guia de configuração](docs/COOLIFY.md).
 
 O transporte `oauth-http` oferece uma única tela com App ID e App Secret. Não exige cadastro ou senha adicional. Valida o acesso à Shopee antes de autorizar o cliente. As credenciais e sessões ficam criptografadas em SQLite num volume persistente e sobrevivem a reinícios; o servidor entrega tokens próprios ao cliente MCP.
 

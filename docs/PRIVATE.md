@@ -14,11 +14,14 @@ computadores, a VPS e as contas que executam os harnesses.
 
 ## Configuração do servidor
 
+No Dokploy, use o [guia privado de deployment e headers](DOKPLOY-PRIVADO.md).
+O perfil remoto desabilita callbacks de localhost por padrão. Ative somente se precisar de Codex/Hermes local.
+
 Além de [COOLIFY.md](COOLIFY.md), configure no runtime:
 
 ```dotenv
 MCP_OWNER_KEY_SHA256=HASH_SHA256_DA_CHAVE_PRIVADA
-MCP_ALLOW_LOOPBACK_CALLBACKS=true
+MCP_ALLOW_LOOPBACK_CALLBACKS=false
 ```
 
 Gere uma chave aleatória de pelo menos 32 bytes, guarde-a no seu gerenciador de

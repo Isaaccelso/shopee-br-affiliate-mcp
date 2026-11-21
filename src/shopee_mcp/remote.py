@@ -47,6 +47,7 @@ SESSION_TTL = 90 * 24 * 3600
 ACCESS_TTL = 3600
 FLOW_TTL = 300
 LIMIT = 256
+REGISTRATION_LIMIT_PER_MINUTE = 10
 COOKIE = "shopee_connect"
 
 
@@ -116,6 +117,7 @@ class OAuthConnections:
         self.pepper = secrets.token_bytes(32)
         self.connect_lock = asyncio.Lock()
         self.auth_attempts = deque()
+        self.registration_attempts = deque()
 
     def save(self):
         if not self.store:
@@ -226,6 +228,14 @@ class OAuthConnections:
         return self.clients.get(client_id)
 
     async def register_client(self, client_info):
+        # DCR discovery stays public for MCP clients, but untrusted callers may not
+        # create unlimited registrations in a short period.
+        now = self.clock()
+        while self.registration_attempts and self.registration_attempts[0] <= now - 60:
+            self.registration_attempts.popleft()
+        if len(self.registration_attempts) >= REGISTRATION_LIMIT_PER_MINUTE:
+            raise RegistrationError("invalid_client_metadata", "Limite temporário de registros OAuth.")
+        self.registration_attempts.append(now)
         if len(self.clients) >= LIMIT:
             raise RegistrationError("invalid_client_metadata", "Limite de clientes atingido.")
         if client_info.token_endpoint_auth_method not in {"none", "client_secret_post"}:
@@ -396,7 +406,10 @@ class RemoteGuard:
                     (b"cache-control", b"no-store"), (b"referrer-policy", b"no-referrer"),
                     (b"x-content-type-options", b"nosniff"), (b"x-frame-options", b"DENY"),
                     (b"content-security-policy", b"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
+                    (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
                 ]
+                if self.origin.startswith("https:"):
+                    message["headers"].append((b"strict-transport-security", b"max-age=31536000"))
             await send(message)
         await self.app(scope, replay, secured_send)
 
