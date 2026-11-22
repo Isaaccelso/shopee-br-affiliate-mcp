@@ -1,4 +1,4 @@
-# Conexão remota: OAuth ou API key — 0.6.0
+# Conexão remota: OAuth ou API key — 0.6.1
 
 O transporte remoto aceita dois modos. OAuth abre uma tela da chave privada,
 App ID e App Secret Shopee e guarda as credenciais criptografadas no volume.
@@ -12,21 +12,18 @@ No Coolify, siga [COOLIFY.md](COOLIFY.md).
 
 Use uma origem dedicada, por exemplo `https://mcp.example.com`, sem caminho.
 Configure DNS e um proxy HTTPS com certificado válido antes de conectar.
-O proxy precisa preservar o header `Host` público e encaminhar todos os
-caminhos, incluindo `/mcp`, `/connect`, `/authorize`, `/register`, `/token`,
-`/revoke` e `/.well-known/*`. Não registre corpos de requisições nem headers
-de autorização no proxy; desabilite cache e mantenha limites de tráfego.
+O proxy precisa preservar o header `Host` público e encaminhar `/mcp` e
+`/health`. Se usar OAuth, encaminhe também `/connect`, `/authorize`, `/register`,
+`/token`, `/revoke` e `/.well-known/*`. Não registre corpos de requisições nem
+headers de autorização no proxy; desabilite cache e mantenha limites de tráfego.
 Para health checks, use `/health` com o `Host` público configurado.
 
-Com Docker Compose, configure no ambiente ou em um `.env` local da VPS:
+Com Docker Compose, configure no ambiente ou em um `.env` local da VPS.
+Para o modo API key — o modo usado pelo Agentes Chat — são suficientes:
 
 ```dotenv
-MCP_OWNER_KEY_SHA256=HASH_DA_CHAVE_PRIVADA
 MCP_PUBLIC_URL=https://mcp.example.com
-MCP_STATE_DB=/app/data/oauth.sqlite3
-MCP_CREDENTIALS_KEY=COLE_A_CHAVE_FERNET_GERADA
 MCP_API_KEY=TOKEN_ALEATORIO_FORTE
-MCP_OAUTH_REDIRECT_URIS=["http://localhost:27890/callback"]
 SHOPEE_APP_ID=APP_ID_DA_OPEN_API
 SHOPEE_APP_SECRET=APP_SECRET_DA_OPEN_API
 SHOPEE_ACCOUNT_REFERENCE=minha-conta
@@ -34,8 +31,15 @@ SHOPEE_ACCOUNT_REFERENCE=minha-conta
 
 Configure os valores sensíveis no ambiente de secrets do Dokploy, não no Git.
 `MCP_API_KEY` deve ser aleatória e ter pelo menos 32 caracteres. No modo API key,
-`SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` são necessários para as chamadas live.
-`MCP_CREDENTIALS_KEY` e o volume continuam necessários para manter o modo OAuth.
+somente `MCP_API_KEY`, `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` são necessários
+para autenticar o cliente e assinar chamadas à Shopee. Esse modo não inicia
+OAuth, não lê `MCP_OWNER_KEY_SHA256` nem `MCP_CREDENTIALS_KEY`, e não usa o
+banco/volume OAuth.
+
+Se quiser OAuth em vez da chave estática, configure também `MCP_OWNER_KEY_SHA256`,
+`MCP_CREDENTIALS_KEY`, `MCP_STATE_DB` e os callbacks OAuth. OAuth e API key são
+modos exclusivos: quando `MCP_API_KEY` está definido, o servidor usa API key e
+desativa as rotas OAuth.
 
 ```sh
 docker compose -f compose.remote.yaml up -d --build

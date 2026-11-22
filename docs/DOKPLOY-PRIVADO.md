@@ -56,19 +56,16 @@ PY
 3. Porta **interna 8765**. Configure o domínio `https://shopee-mcp.seudominio.com.br` no proxy do Dokploy e HTTPS.
 4. Não publique a porta 8765 diretamente no host (nada de `0.0.0.0:8765:8765`). Somente o proxy da rede Docker deve encaminhar tráfego até o container.
 5. Configure **um volume persistente** em `/app/data`, gravável pelo UID 10001. Configure 1 réplica e 1 worker.
-6. Adicione as variáveis abaixo como **runtime/secrets**, não como build args. Ajuste o domínio e os valores gerados:
+6. Para a conexão por API key do Agentes Chat, adicione apenas estas variáveis como **runtime/secrets**, não como build args:
 
 ```dotenv
 MCP_PUBLIC_URL=https://shopee-mcp.seudominio.com.br
-MCP_OWNER_KEY_SHA256=COLE_O_HASH_SHA256_AQUI
-MCP_CREDENTIALS_KEY=COLE_A_CHAVE_FERNET_AQUI
-MCP_STATE_DB=/app/data/oauth.sqlite3
-SHOPEE_VERIFIED_PROFILE=/app/examples/profile.official.json
-MCP_ALLOW_LOOPBACK_CALLBACKS=false
-MCP_OAUTH_REDIRECT_URIS=[]
+MCP_API_KEY=CHAVE_ALEATORIA_DE_PELO_MENOS_32_CARACTERES
+SHOPEE_APP_ID=APP_ID_DA_OPEN_API
+SHOPEE_APP_SECRET=APP_SECRET_DA_OPEN_API
 ```
 
-No modo OAuth, não é necessário colocar `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` no runtime: o formulário os guarda criptografados no banco. No modo API key, configure ambos como secrets de runtime, além de `MCP_API_KEY`; eles são usados para assinar as chamadas à Shopee.
+Esse modo não usa `MCP_OWNER_KEY_SHA256`, `MCP_CREDENTIALS_KEY` nem o volume OAuth. Se optar pelo OAuth, configure essas variáveis e o volume conforme o restante deste guia; sem `MCP_API_KEY`, o servidor inicia OAuth.
 
 Se sua tela do Dokploy não disponibilizar a escolha do build target, use um deploy Docker Compose personalizado com `build.target: remote`, conectando o serviço ao proxy do Dokploy pela rede interna. Não use o estágio `stdio` esperando que ele abra uma porta.
 

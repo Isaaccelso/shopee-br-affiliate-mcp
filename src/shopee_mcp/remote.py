@@ -426,92 +426,101 @@ class RemoteGuard:
 
 def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=None, allow_loopback=None, store=None, restore_factory=None, owner_hash=None):
     origin = public_origin(public_url)
-    if redirects is None:
-        try:
-            redirects = json.loads(os.getenv("MCP_OAUTH_REDIRECT_URIS", "[]"))
-            if not isinstance(redirects, list) or any(not isinstance(u, str) for u in redirects):
-                raise ValueError
-        except ValueError:
-            raise SafeError("CONFIGURATION", "MCP_OAUTH_REDIRECT_URIS deve ser uma lista JSON de callbacks.") from None
-    if owner_hash is None:
-        owner_hash = os.getenv("MCP_OWNER_KEY_SHA256", "")
-    if owner_hash and not re.fullmatch(r"[a-f0-9]{64}", owner_hash):
-        raise SafeError("CONFIGURATION", "MCP_OWNER_KEY_SHA256 deve ser o SHA256 de uma chave privada aleatória.")
     api_key = os.getenv("MCP_API_KEY", "")
     if api_key and (len(api_key) < 32 or any(ord(c) < 33 or ord(c) > 126 for c in api_key)):
         raise SafeError("CONFIGURATION", "MCP_API_KEY precisa ter pelo menos 32 caracteres ASCII sem espaços.")
+    if api_key:
+        # Static API-key deployments do not use OAuth state or its encryption keys.
+        owner_hash = ""
+        redirects = []
+    else:
+        if redirects is None:
+            try:
+                redirects = json.loads(os.getenv("MCP_OAUTH_REDIRECT_URIS", "[]"))
+                if not isinstance(redirects, list) or any(not isinstance(u, str) for u in redirects):
+                    raise ValueError
+            except ValueError:
+                raise SafeError("CONFIGURATION", "MCP_OAUTH_REDIRECT_URIS deve ser uma lista JSON de callbacks.") from None
+        if owner_hash is None:
+            owner_hash = os.getenv("MCP_OWNER_KEY_SHA256", "")
+        if owner_hash and not re.fullmatch(r"[a-f0-9]{64}", owner_hash):
+            raise SafeError("CONFIGURATION", "MCP_OWNER_KEY_SHA256 deve ser o SHA256 de uma chave privada aleatória.")
     if factory is None:
-        if not owner_hash:
+        if not api_key and not owner_hash:
             raise SafeError("CONFIGURATION", "Configure MCP_OWNER_KEY_SHA256 para autorizar somente o proprietário.")
         factory = live_factory()
-        restore_factory = live_factory(validate=False)
-        store = store or EncryptedStore(os.getenv("MCP_STATE_DB", "/app/data/oauth.sqlite3"),
-            os.getenv("MCP_CREDENTIALS_KEY", ""))
+        if not api_key:
+            restore_factory = live_factory(validate=False)
+            store = store or EncryptedStore(os.getenv("MCP_STATE_DB", "/app/data/oauth.sqlite3"),
+                os.getenv("MCP_CREDENTIALS_KEY", ""))
     static_credentials = Credentials.from_env() if api_key else None
     static_account = os.getenv("SHOPEE_ACCOUNT_REFERENCE", "shopee-affiliate")
     static_service = None
-    provider = OAuthConnections(origin, factory, clock=clock, redirects=redirects,
-        store=store, restore_factory=restore_factory, owner_hash=owner_hash,
-        allow_loopback=allow_loopback if allow_loopback is not None else os.getenv("MCP_ALLOW_LOOPBACK_CALLBACKS") == "true")
-    registration = ClientRegistrationOptions(enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE])
-    revocation = RevocationOptions(enabled=True)
-    routes = create_auth_routes(provider, AnyHttpUrl(origin),
-        client_registration_options=registration, revocation_options=revocation)
-    # SDK v1 defaults to secret_post; explicitly advertise both supported DCR methods.
-    metadata = build_metadata(AnyHttpUrl(origin), None, registration, revocation)
-    metadata.token_endpoint_auth_methods_supported = ["none", "client_secret_post"]
-    metadata.revocation_endpoint_auth_methods_supported = ["none", "client_secret_post"]
-    token_handler = TokenHandler(provider, ClientAuthenticator(provider))
+    provider = None
+    routes = []
+    if not api_key:
+        provider = OAuthConnections(origin, factory, clock=clock, redirects=redirects,
+            store=store, restore_factory=restore_factory, owner_hash=owner_hash,
+            allow_loopback=allow_loopback if allow_loopback is not None else os.getenv("MCP_ALLOW_LOOPBACK_CALLBACKS") == "true")
+        registration = ClientRegistrationOptions(enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE])
+        revocation = RevocationOptions(enabled=True)
+        routes = create_auth_routes(provider, AnyHttpUrl(origin),
+            client_registration_options=registration, revocation_options=revocation)
+        # SDK v1 defaults to secret_post; explicitly advertise both supported DCR methods.
+        metadata = build_metadata(AnyHttpUrl(origin), None, registration, revocation)
+        metadata.token_endpoint_auth_methods_supported = ["none", "client_secret_post"]
+        metadata.revocation_endpoint_auth_methods_supported = ["none", "client_secret_post"]
+        token_handler = TokenHandler(provider, ClientAuthenticator(provider))
 
-    async def token_endpoint(request):
-        form = await request.form()
-        if form.get("resource") not in (None, provider.resource):
-            return JSONResponse({"error": "invalid_target"}, status_code=400)
-        if form.get("grant_type") == "authorization_code" and not re.fullmatch(
-                r"[A-Za-z0-9._~-]{43,128}", str(form.get("code_verifier", ""))):
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
-        return await token_handler.handle(request)
+        async def token_endpoint(request):
+            form = await request.form()
+            if form.get("resource") not in (None, provider.resource):
+                return JSONResponse({"error": "invalid_target"}, status_code=400)
+            if form.get("grant_type") == "authorization_code" and not re.fullmatch(
+                    r"[A-Za-z0-9._~-]{43,128}", str(form.get("code_verifier", ""))):
+                return JSONResponse({"error": "invalid_grant"}, status_code=400)
+            return await token_handler.handle(request)
 
-    async def revoke_endpoint(request):
-        # SDK 1.21.1 incorrectly requires client_secret even for public clients.
-        form = await request.form()
-        try:
-            client = await ClientAuthenticator(provider).authenticate(
-                str(form.get("client_id", "")), form.get("client_secret"))
-        except AuthenticationError:
-            return JSONResponse({"error": "invalid_client"}, status_code=401)
-        value = str(form.get("token", ""))
-        token = await provider.load_access_token(value) or await provider.load_refresh_token(client, value)
-        if token and token.client_id == client.client_id:
-            await provider.revoke_token(token)
-        return JSONResponse({})
+        async def revoke_endpoint(request):
+            # SDK 1.21.1 incorrectly requires client_secret even for public clients.
+            form = await request.form()
+            try:
+                client = await ClientAuthenticator(provider).authenticate(
+                    str(form.get("client_id", "")), form.get("client_secret"))
+            except AuthenticationError:
+                return JSONResponse({"error": "invalid_client"}, status_code=401)
+            value = str(form.get("token", ""))
+            token = await provider.load_access_token(value) or await provider.load_refresh_token(client, value)
+            if token and token.client_id == client.client_id:
+                await provider.revoke_token(token)
+            return JSONResponse({})
 
-    for i, route in enumerate(routes):
-        if route.path == "/.well-known/oauth-authorization-server":
-            routes[i] = Route(route.path, MetadataHandler(metadata).handle, methods=["GET"])
-        elif route.path == "/token":
-            routes[i] = Route(route.path, token_endpoint, methods=["POST"])
-        elif route.path == "/revoke":
-            routes[i] = Route(route.path, revoke_endpoint, methods=["POST"])
-    resource_routes = create_protected_resource_routes(AnyHttpUrl(provider.resource), [AnyHttpUrl(origin)],
-        scopes_supported=[SCOPE], resource_name="Shopee Affiliate MCP")
-    routes.extend(resource_routes)
-    routes.append(Route("/.well-known/oauth-protected-resource", resource_routes[0].endpoint, methods=["GET"]))
+        for i, route in enumerate(routes):
+            if route.path == "/.well-known/oauth-authorization-server":
+                routes[i] = Route(route.path, MetadataHandler(metadata).handle, methods=["GET"])
+            elif route.path == "/token":
+                routes[i] = Route(route.path, token_endpoint, methods=["POST"])
+            elif route.path == "/revoke":
+                routes[i] = Route(route.path, revoke_endpoint, methods=["POST"])
+        resource_routes = create_protected_resource_routes(AnyHttpUrl(provider.resource), [AnyHttpUrl(origin)],
+            scopes_supported=[SCOPE], resource_name="Shopee Affiliate MCP")
+        routes.extend(resource_routes)
+        routes.append(Route("/.well-known/oauth-protected-resource", resource_routes[0].endpoint, methods=["GET"]))
 
-    async def connect(request: Request):
-        if request.method == "GET":
-            flow = request.query_params.get("flow", "")
-            pending = provider.pending_flow(flow)
-            if not pending:
-                return HTMLResponse("Conexão expirada. Volte ao cliente e conecte novamente.", status_code=400)
-            csrf = secrets.token_urlsafe(32)
-            provider.pending[flow] = (*pending[:3], csrf)
-            client = provider.clients[pending[0]]
-            destination = html.escape(str(pending[1].redirect_uri))
-            name = html.escape(client.client_name or "Cliente MCP")
-            owner_field = ('<label for="owner_key">Chave de acesso privada</label>'
-                '<input id="owner_key" name="owner_key" type="password" maxlength="512" autocomplete="off" required>') if provider.owner_hash else ""
-            page = f'''<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Shopee</title>
+        async def connect(request: Request):
+            if request.method == "GET":
+                flow = request.query_params.get("flow", "")
+                pending = provider.pending_flow(flow)
+                if not pending:
+                    return HTMLResponse("Conexão expirada. Volte ao cliente e conecte novamente.", status_code=400)
+                csrf = secrets.token_urlsafe(32)
+                provider.pending[flow] = (*pending[:3], csrf)
+                client = provider.clients[pending[0]]
+                destination = html.escape(str(pending[1].redirect_uri))
+                name = html.escape(client.client_name or "Cliente MCP")
+                owner_field = ('<label for="owner_key">Chave de acesso privada</label>'
+                    '<input id="owner_key" name="owner_key" type="password" maxlength="512" autocomplete="off" required>') if provider.owner_hash else ""
+                page = f'''<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Shopee</title>
 <style>body{{font:16px system-ui;background:#f5f5f5;color:#222;margin:0;padding:24px}}main{{max-width:440px;margin:8vh auto;padding:28px;background:white;border-radius:16px}}h1{{font-size:26px}}label{{display:block;margin-top:20px}}input,button{{box-sizing:border-box;width:100%;padding:12px;margin-top:8px;border:1px solid #ccc;border-radius:8px;font:inherit}}button{{background:#b9380a;color:white;border:0;margin-top:24px}}small{{display:block;margin-top:20px;line-height:1.5}}code{{overflow-wrap:anywhere}}</style>
 <main><h1>Conectar sua Shopee</h1><p>Informe as credenciais da Open API de Afiliados. Não é a senha da sua conta Shopee.</p>
 <p>Você autoriza <strong>{name}</strong> a pesquisar ofertas, gerar links e consultar seus relatórios enquanto esta conexão estiver autorizada.</p><small>O acesso será entregue a: <code>{destination}</code>. Confira o destino antes de continuar.</small>
@@ -520,31 +529,43 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
 <label for="app_id">App ID</label><input id="app_id" name="app_id" type="password" maxlength="128" autocomplete="off" required>
 <label for="secret">App Secret</label><input id="secret" name="secret" type="password" maxlength="512" autocomplete="off" required>
 <button>Conectar e autorizar</button></form><small>As credenciais ficam criptografadas neste servidor. A conexão é renovada automaticamente; após 90 dias sem renovação, conecte novamente. Serviço independente, sem vínculo oficial com a Shopee.</small></main></html>'''
-            response = HTMLResponse(page)
-            response.set_cookie(COOKIE, csrf, max_age=FLOW_TTL, httponly=True,
-                secure=origin.startswith("https:"), samesite="strict", path="/connect")
+                response = HTMLResponse(page)
+                response.set_cookie(COOKIE, csrf, max_age=FLOW_TTL, httponly=True,
+                    secure=origin.startswith("https:"), samesite="strict", path="/connect")
+                return response
+            if request.headers.get("origin") != origin:
+                return HTMLResponse("Origem do formulário inválida.", status_code=403)
+            try:
+                form = await request.form()
+                credentials = Credentials(str(form.get("app_id", "")), str(form.get("secret", "")))
+                target = await provider.connect(str(form.get("flow", "")), str(form.get("csrf", "")),
+                    request.cookies.get(COOKIE, ""), credentials, str(form.get("owner_key", "")))
+            except SafeError as error:
+                return HTMLResponse(html.escape(error.message) + " Volte e tente conectar novamente.", status_code=400)
+            except Exception:
+                return HTMLResponse("Não foi possível validar as credenciais. Tente conectar novamente.", status_code=400)
+            response = RedirectResponse(target, status_code=303)
+            response.delete_cookie(COOKIE, path="/connect")
             return response
-        if request.headers.get("origin") != origin:
-            return HTMLResponse("Origem do formulário inválida.", status_code=403)
-        try:
-            form = await request.form()
-            credentials = Credentials(str(form.get("app_id", "")), str(form.get("secret", "")))
-            target = await provider.connect(str(form.get("flow", "")), str(form.get("csrf", "")),
-                request.cookies.get(COOKIE, ""), credentials, str(form.get("owner_key", "")))
-        except SafeError as error:
-            return HTMLResponse(html.escape(error.message) + " Volte e tente conectar novamente.", status_code=400)
-        except Exception:
-            return HTMLResponse("Não foi possível validar as credenciais. Tente conectar novamente.", status_code=400)
-        response = RedirectResponse(target, status_code=303)
-        response.delete_cookie(COOKIE, path="/connect")
-        return response
 
-    server = build_server(load_service("fixture"), resolve_service=provider.resolve_service)
+        routes.append(Route("/connect", connect, methods=["GET", "POST"]))
+
+    def resolve_service(request):
+        user = request.scope.get("user") if request else None
+        if isinstance(user, StaticApiKeyUser):
+            return user.service
+        if provider:
+            return provider.resolve_service(request)
+        raise SafeError("AUTH_REQUIRED", "A chave de API é obrigatória.")
+
+    server = build_server(load_service("fixture"), resolve_service=resolve_service,
+                          advertise_oauth=provider is not None)
     manager = StreamableHTTPSessionManager(server, json_response=True, stateless=True,
         security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=True,
             allowed_hosts=[urlsplit(origin).netloc], allowed_origins=[origin]))
-    authenticated = RequireAuthMiddleware(manager.handle_request, [SCOPE],
+    authenticated = (RequireAuthMiddleware(manager.handle_request, [SCOPE],
         resource_metadata_url=AnyHttpUrl(origin + "/.well-known/oauth-protected-resource/mcp"))
+        if provider else None)
 
     async def authenticate_mcp(scope, receive, send):
         if scope["type"] == "http" and scope["path"] in {"/mcp", "/mcp/"} and api_key:
@@ -556,13 +577,14 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
                 authenticated_scope = dict(scope)
                 authenticated_scope["user"] = StaticApiKeyUser(static_service)
                 return await manager.handle_request(authenticated_scope, receive, send)
+            return await JSONResponse({"error": "authentication required"}, status_code=401,
+                headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
         return await authenticated(scope, receive, send)
 
     async def health(request):
-        return JSONResponse({"status": "ok", "version": "0.6.0"})
+        return JSONResponse({"status": "ok", "version": "0.6.1"})
 
     routes.extend([Route("/health", health, methods=["GET"]),
-        Route("/connect", connect, methods=["GET", "POST"]),
         Route("/mcp", authenticate_mcp, methods=["GET", "POST", "DELETE"]),
         Route("/mcp/", authenticate_mcp, methods=["GET", "POST", "DELETE"])])
 
@@ -571,28 +593,33 @@ def build_remote_app(public_url, *, factory=None, clock=time.time, redirects=Non
         nonlocal static_service
         if static_credentials:
             static_service = await factory(static_credentials, static_account)
-        await provider.restore()
-        async def cleanup():
-            while True:
-                await asyncio.sleep(30)
-                async with provider.connect_lock:
-                    await provider.sweep()
-        task = asyncio.create_task(cleanup())
+        task = None
+        if provider:
+            await provider.restore()
+            async def cleanup():
+                while True:
+                    await asyncio.sleep(30)
+                    async with provider.connect_lock:
+                        await provider.sweep()
+            task = asyncio.create_task(cleanup())
         try:
             async with manager.run():
                 yield
         finally:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            await provider.close()
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            if provider:
+                await provider.close()
             if static_service and isinstance(static_service.provider, LiveProvider):
                 await static_service.provider.client.close()
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.oauth = provider
-    app.add_middleware(AuthenticationMiddleware, backend=BearerAuthBackend(ProviderTokenVerifier(provider)))
+    if provider:
+        app.add_middleware(AuthenticationMiddleware, backend=BearerAuthBackend(ProviderTokenVerifier(provider)))
     app.add_middleware(RemoteGuard, origin=origin)
     return app

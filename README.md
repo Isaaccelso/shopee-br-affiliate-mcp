@@ -1,4 +1,4 @@
-# Shopee Affiliate MCP — 0.6.0
+# Shopee Affiliate MCP — 0.6.1
 
 Servidor MCP em Python para a Open API de Afiliados Shopee Brasil. Expõe 17 ferramentas por stdio ou Streamable HTTP com OAuth e, em instalações privadas, Bearer API key. Usa consultas GraphQL assinadas com App ID e Secret da conta configurada.
 
@@ -42,7 +42,7 @@ O formulário OAuth exige uma chave privada antes de autorizar as credenciais Sh
 Para subir no **Dokploy de forma privada**, siga [o guia de configuração, OAuth e API key](docs/DOKPLOY-PRIVADO.md).
 Para Coolify, siga [o guia de configuração](docs/COOLIFY.md).
 
-O transporte remoto oferece OAuth, com formulário e credenciais criptografadas em SQLite, ou API key estática Bearer para uma conta fixa do servidor. No modo API key, `MCP_API_KEY` protege `/mcp`; `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` ficam como secrets de runtime para assinar chamadas à Shopee. A chave MCP não substitui as credenciais Shopee.
+O transporte remoto oferece OAuth, com formulário e credenciais criptografadas em SQLite, ou API key estática Bearer para uma conta fixa do servidor. No modo API key, `MCP_API_KEY` protege `/mcp`; `SHOPEE_APP_ID` e `SHOPEE_APP_SECRET` ficam como secrets de runtime para assinar chamadas à Shopee. Esse modo não usa `MCP_OWNER_KEY_SHA256`, `MCP_CREDENTIALS_KEY` nem o banco OAuth.
 
 Hospede atrás de HTTPS na VPS e configure `MCP_PUBLIC_URL` e `SHOPEE_VERIFIED_PROFILE`. OAuth pode usar contas por conexão; API key usa a conta fixa do servidor. Conexões com as mesmas credenciais compartilham o cliente e os controles locais. Histórico SQLite fica desabilitado neste transporte.
 

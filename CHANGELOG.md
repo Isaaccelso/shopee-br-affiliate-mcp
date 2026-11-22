@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 — 2026-11-22
+
+- API-key mode now runs without OAuth owner hash, Fernet key, or OAuth database.
+- OAuth endpoints are disabled when static API-key authentication is configured.
+
 ## 0.6.0 — 2026-11-21
 
 - Add optional static Bearer API key authentication for remote `/mcp` clients.
